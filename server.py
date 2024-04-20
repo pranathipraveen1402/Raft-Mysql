@@ -3,6 +3,7 @@ import sys
 from threading import Thread
 import time
 import queue
+import mysql.connector
 
 import grpc
 from concurrent import futures
@@ -121,10 +122,8 @@ class ServerHandler(pb2_grpc.ServerServicer):
                 num_votes += 1
         
         if self.is_candidate == False:
-            # print("Votes not received")
             return False
         
-        # print(f"Votes received. Number of votes: {num_votes}")
         print(f"Votes received")
         # become a leader
         if num_votes >= TOTAL_NMB_SRVRS//2 + 1:
@@ -160,17 +159,10 @@ class ServerHandler(pb2_grpc.ServerServicer):
                 leaderCommit=int(self.commit_index) #TODO TODO TODO
             )
 
-            # reply = self.dict_id_stub[str(id)].AppendEntries(msg)
-            # self.replies.append(reply)
-                
-
             try:
-                # print(msg)
                 reply = self.dict_id_stub[str(id)].AppendEntries(msg)
-                # print(f"sent heartbeat to {id}")
                 self.replies.append((id, reply))
                 if reply.message == "replicated":
-                    # print(f"replicated {id} and new index is {self.next_index[id]}")
                     self.match_index[id] = self.next_index[id]
                     self.next_index[id] += 1
                 if reply.message == "not_replicated":
@@ -179,17 +171,14 @@ class ServerHandler(pb2_grpc.ServerServicer):
                     self.leader_id = id
 
             except:
-                # print(f"cannot send heartbeat to {id}")
                 pass
+    
     def send_all_heartbeats(self):
-        # clear old replies
         self.replies = []
-        # fill the queue
         self.requests_queue = queue.Queue()
         for key in self.dict_id_stub.keys():
             if key != self.my_id:
                 self.requests_queue.put(key)
-        # create 10 threads that will send vote requests
         threads = []
         for i in range(NUM_MSG_THRDS):
             t = Thread(target=self.work_heartbeat_sender)
@@ -210,15 +199,11 @@ class ServerHandler(pb2_grpc.ServerServicer):
         pass
         
     def waiting_func(self):
-        # print("I have started") #TO DELETE
         while not self.is_suspended:
-            # is a follower
             if self.my_id != self.leader_id:
                 self.timer = randint(RESTART_INTERVAL[0], RESTART_INTERVAL[1])
-                # print(f"I am a follower. Term: {self.cur_term}")
                 self.next_index = [self.last_log_index + 1 for i in range(TOTAL_NMB_SRVRS)]
                 self.work_follower_timer()
-            # if a leader
             if self.my_id == self.leader_id:
                 print(f"I am a leader. Term: {self.cur_term}")
                 self.work_leader_timer()
@@ -233,15 +218,10 @@ class ServerHandler(pb2_grpc.ServerServicer):
             self.dict_id_stub[id] = pb2_grpc.ServerStub(channel)
  
     def __init__(self, id, dict_id_addr):
-        # dictionary of servers in the raft
         self.dict_id_stub = {}
-        # my number
         self.my_id = id
-        # leader number 
         self.leader_id = -1
-        # current term
         self.cur_term = 1
-        # for who voted on current term
         self.vote_of_term = -1
         
         self.commit_index = 0
@@ -249,25 +229,18 @@ class ServerHandler(pb2_grpc.ServerServicer):
         self.last_log_index = 0
         self.last_log_term = 0
 
-        # is suspended
         self.is_suspended = False
         
         self.is_candidate = False
         
         self.timer = self.update_timer()
         
-        # waiting thread, it can 
-            # request votes or  -> if follower, then become a candidate
-            # send entries      -> if leader, then continue being a leader
         self.waiting_thread = Thread(target = self.waiting_func)
         
-        # queue of addresses to send heartbeat and vote requests
         self.requests_queue = queue.Queue()
         
-        # list of message replies from heartbeat and votes
         self.replies = []
         
-        # fill the dict of stubs
         self.fill_dict_of_stubs(dict_id_addr)
 
         self.waiting_thread.daemon = True
@@ -277,14 +250,17 @@ class ServerHandler(pb2_grpc.ServerServicer):
         self.next_index = [1 for i in range(TOTAL_NMB_SRVRS)]
         self.match_index = [0 for i in range(TOTAL_NMB_SRVRS)]
 
+        self.db = mysql.connector.connect(
+            host="localhost",
+            user="root",
+            password="pwd",
+            database="ccproject"
+        )
+        self.cursor = self.db.cursor()
+
+
+
     def RequestVote(self, request, context):
-        """"""
-        # 1. If term is equal to the term number on this server AND this server did not vote in the given term, then result is True.
-        # 2. If term is greater than the term number on this server, then:
-            # update its term number with the term
-            # check condition 1.
-        # 3. Else, the result is False
-        
         if self.is_suspended:
             rpl = {"received": False, "message": f"is suspended"}
             return pb2.MessageResponse(**rpl)
@@ -308,8 +284,8 @@ class ServerHandler(pb2_grpc.ServerServicer):
                     if self.vote_of_term == -1:
                         self.vote_of_term = cand_id
                         print(f"Voted for node {cand_id}")
-                        self.leader_id = -1 # if voted for someone, then wait for a new leader
-                        self.is_candidate = False # if voted for someone, then stop being a candidate
+                        self.leader_id = -1
+                        self.is_candidate = False
                         self.update_timer()
                         rspns = True
                     break
@@ -330,10 +306,6 @@ class ServerHandler(pb2_grpc.ServerServicer):
             return pb2.MessageResponse(**rpl)
     
     def AppendEntries(self, request, context):
-        """ Send heartbeat message
-            Leader calls this function from all other servers every 50 ms
-            When this function is called on the server, the server resets its timer
-        """
         if self.is_suspended:
             rpl = {"received": False, "message": f"is suspended"}
             return pb2.MessageResponse(**rpl)
@@ -350,10 +322,8 @@ class ServerHandler(pb2_grpc.ServerServicer):
 
             if self.cur_term < term_num:
                 self.cur_term = term_num
-                # print(f"I am a follower. Term: {self.cur_term}")
             
             if rspns:
-                # self.update_timer()
                 self.timer = RESTART_INTERVAL[1]
                 self.leader_id = leader_id
                 
@@ -387,30 +357,21 @@ class ServerHandler(pb2_grpc.ServerServicer):
                 self.last_log_index = self.log_list[-1].index
                 self.last_log_term = self.log_list[-1].term_number
 
-            # if leader_commit > self.commit_index and rpl["message"] == "replicated":
-            #     self.commit_index = min(prev_log_index + 1, leader_commit)
-
             self.commit_index = self.last_log_index
-        
-            # print("!!!!!!!")
         
             return pb2.MessageResponse(**rpl)
 
         except:
-            # print("heartbeat went wrong")
             rpl = {"received": False, "message": f"failed to append entries"}
             return pb2.MessageResponse(**rpl)
         pass
     
     def GetLeader(self, request, context):
-        """Get the leader of the raft"""
-        
         if self.is_suspended:
             rpl = {"received": False, "message": f"is suspended"}
             return pb2.MessageResponse(**rpl)
         
         try:
-            # print(self.leader_id, dict_id_addr[self.leader_id])
             msg = str(self.leader_id) + " " + str(dict_id_addr.get(str(self.leader_id)))
             print("Command from client: getleader")
             print(msg)
@@ -429,8 +390,6 @@ class ServerHandler(pb2_grpc.ServerServicer):
         pass
     
     def Suspend(self, request, context):
-        """Suspend the server for requested number of seconds"""
-        
         try:
             if self.is_suspended:
                 rpl = {"received": False, "message": f"is suspended"}
@@ -438,7 +397,6 @@ class ServerHandler(pb2_grpc.ServerServicer):
             
             count = int(request.message)
             print(f"Command from client: suspend {count}")
-            # run a new work_suspend tread
             t = Thread(target=self.work_suspend, kwargs={'count': count})
             t.start()
             rpl = {"received": True, "message": f"successfully suspended for {count}s"}
@@ -448,50 +406,107 @@ class ServerHandler(pb2_grpc.ServerServicer):
             return pb2.MessageResponse(**rpl)
     
     def SetVal(self, request, context):
-        if self.is_suspended:
-            rpl = {"received": False, "message": f"is suspended"}
-            return pb2.MessageResponse(**rpl)
-        
-        if self.leader_id == -1:
-            rpl = {"received": False, "message": f"currently we don't have leader"}
-            return pb2.MessageResponse(**rpl)
-        
-        if self.my_id != self.leader_id:
-            return self.dict_id_stub[str(self.leader_id)].SetVal(request)
+        key, value = request.key, request.value
+        try:
+            if key.startswith("complete_task"):
+                task_id = key.split("_")[2] 
+                self.update_task_status(task_id, "complete")
+                return pb2.MessageResponse(received=True, message=f"Task '{task_id}' marked as complete.")
+            else:
+                task_name = key
+                task_description = value
+                task_status = "incomplete"  
 
-        self.log_list.append(Log(\
-            index=len(self.log_list)+1,\
-            term_number=self.cur_term,\
-            command=(request.key, request.value)
-        ))
+                self.insert_task_to_db(task_name, task_description, task_status)
 
-        self.last_log_index = len(self.log_list)
-        self.last_log_term = self.cur_term
-        rpl = {"received": True, "message": f"new command: set value of {request.key} to {request.value}"}
-        return pb2.MessageResponse(**rpl)
+                return pb2.MessageResponse(received=True, message=f"Task '{key}' inserted successfully.")
+        except Exception as e:
+            return pb2.MessageResponse(received=False, message=f"Error processing task: {str(e)}")
+
 
     def GetVal(self, request, context):
+        key = request.key
+        try:
+            task_name = self.get_task_from_db(key)
+            return pb2.MessageResponse(received=True, message=f"Task name for ID {key}: {task_name}")
+        except Exception as e:
+            return pb2.MessageResponse(received=False, message=f"Error fetching task: {str(e)}")
+
         res = "None"
-        # print("LOGS:")
-        # for log in self.log_list:
-        #     print(log.index, log.term_number, log.command)
-        # print("Nexts and matchindexes:")
-        # for i in range(TOTAL_NMB_SRVRS):
-        #     print(f"index= {i} - next= {self.next_index[i]} match= {self.match_index[i]}")
-        # print(f"Commit index: {self.commit_index}")
-        # print(f"last index= {self.last_log_index} <-> last term= {self.last_log_term}")
         
         for log in self.log_list[:self.commit_index:]:
             if request.key == log.command[0]:
                 res = log.command[1]
         rpl = {"received": True, "message": f"{res}"}
         return pb2.MessageResponse(**rpl)
-    
+
+    def DeleteTask(self, request, context):
+        key_parts = request.key.split()  # Split the key by whitespace
+        task_id = key_parts[-1]  # Get the last part of the key
+        try:
+            if self.delete_task_from_db(task_id):
+                return pb2.MessageResponse(received=True, message=f"Task '{task_id}' deleted successfully.")
+            else:
+                return pb2.MessageResponse(received=False, message=f"Error deleting task '{task_id}'.")
+        except Exception as e:
+            return pb2.MessageResponse(received=False, message=f"Error deleting task: {str(e)}")
+
+    def insert_task_to_db(self, task_name, task_description, task_status):
+        try:
+            sql = "INSERT INTO tasks (task_name, description, status) VALUES (%s, %s, %s)"
+            val = (task_name, task_description, task_status)
+            self.cursor.execute(sql, val)
+            self.db.commit()
+            return True
+        except Exception as e:
+            print("Error inserting task:", e)
+            return False
+
+
+    def get_task_from_db(self, task_id):
+        try:
+            sql = "SELECT * FROM tasks WHERE id = %s"
+            self.cursor.execute(sql, (task_id,))
+            result = self.cursor.fetchone()
+            if result:
+                task_id, task_name, description, status = result
+                return {
+                    "task_id": task_id,
+                    "task_name": task_name,
+                    "description": description,
+                    "status": status
+                }
+            else:
+                return None
+        except Exception as e:
+            print("Error fetching task:", e)
+            return None
+
+    def update_task_status(self, task_id, status):
+        try:
+            sql = "UPDATE tasks SET status = %s WHERE task_id = %s"
+            val = (status, task_id)
+            self.cursor.execute(sql, val)
+            self.db.commit()
+        except Exception as e:
+            print("Error updating task status:", e)
+
+    def delete_task_from_db(self, task_id):
+        try:
+            sql = "DELETE FROM tasks WHERE task_id = %s"
+            self.cursor.execute(sql, (task_id,))
+            self.db.commit()
+            return True
+        except Exception as e:
+            print("Error deleting task:", e)
+            return False
+
+
+  
 def main():
     global TOTAL_NMB_SRVRS
     try:
         ID = sys.argv[1]
-        # IP_PORT = sys.argv[1]
     except:
         return
     
@@ -506,8 +521,6 @@ def main():
         addr = (line[1] + ":" + line[2]).replace('\n', '')
         dict_id_addr[id] = addr 
 
-    # print(dict_id_addr)
-    
     IP_PORT = dict_id_addr[ID]
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     server_handler = ServerHandler(ID, dict_id_addr)

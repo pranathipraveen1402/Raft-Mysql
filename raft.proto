@@ -14,6 +14,8 @@ service Server {
     rpc SetVal(MessageKeyValue) returns (MessageResponse);
 
     rpc GetVal(MessageKey) returns (MessageResponse);
+
+     rpc DeleteTask(DeleteTaskRequest) returns (MessageResponse) {}
 }
 
 message EmptyMessage { 
@@ -57,3 +59,8 @@ message MessageResponse {
     bool received = 1;
     string message = 2;
 }
+
+message DeleteTaskRequest {
+    string key = 1;
+}
+

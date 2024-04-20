@@ -1,0 +1,13 @@
+1. Activate a virtual environment - conda activate raft
+2.  python3 server.py 0 
+3.  python3 server.py 1 ( in different terminal window )
+4.  python3 server.py 2 ( in different terminal window )
+5.  python client.py 
+6.  if doing through terminal - setval <context> taskname taskdesc
+                              - getval <context>
+                              - complete_task <task ID>
+                              - delete_task <task ID>
+7. else run app.py
+8. change db name, pwd, create a table -
+CREATE TABLE tasks ( task_id INT AUTO_INCREMENT PRIMARY KEY,     task_name VARCHAR(255) NOT NULL, description TEXT, status ENUM('complete', 'incomplete') DEFAULT 'incomplete' );
+
