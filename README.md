@@ -4,3 +4,4 @@
 ### See examples of how to run the program in [this file](https://github.com/bovvlet/RAFT/blob/main/Lab07.pdf)
 ### Design is mostly same Raft RPC described in original paper 
 ### Some modifications added, which can be checked in [this file](https://github.com/bovvlet/RAFT/blob/main/Lab07.pdf)
+# Raft-Mysql
